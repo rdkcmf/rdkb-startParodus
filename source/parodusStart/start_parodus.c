@@ -668,7 +668,7 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 	cJSON *cfgValObj = NULL;
 	cJSON *json = NULL;
 	FILE *fileRead;
-	int len;
+	int len = 0,n = 0;
 	fileRead = fopen( WEBPA_CFG_FILE, "r+" );    
 	if( fileRead == NULL ) 
 	{
@@ -680,15 +680,26 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 	len = ftell( fileRead );
 	fseek( fileRead, 0, SEEK_SET );
 	data = ( char* )malloc( sizeof(char) * (len + 1) );
-        if (data != NULL) {
-	    memset( data, 0, ( sizeof(char) * (len + 1) ));
-	    fread( data, 1, len, fileRead );
-        } else {
-	    LogError("malloc() failed\n");
-	}
+         if (!data) {
+            LogError("malloc() failed\n");
+            fclose( fileRead );
+            return;
+        } 
+          /* Coverity fix CID: 135424 STRING_SIZE NULL */
+          n = fread( data, 1, len, fileRead );
+             if (n <= 0) {
+                LogInfo("webpa_cfg.json is empty\n");
+                fclose( fileRead );
+                return;
+            }
+  
+                data[n] = '\0';
+            
+  
 
 	fclose( fileRead );
-
+        
+        
 	if( data != NULL && (strlen(data) > 0) )
 	{
 	    json = cJSON_Parse( data );
@@ -777,6 +788,7 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 	else
 	{
 		LogInfo("webpa_cfg.json is empty\n");
+                return;
 	}
 }
 

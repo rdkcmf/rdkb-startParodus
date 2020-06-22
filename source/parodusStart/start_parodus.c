@@ -39,6 +39,7 @@
 #include <autoconf.h>
 #endif
 #include "cJSON.h"
+#include "safec_lib_common.h"
 
 #if defined(_PLATFORM_RASPBERRYPI_) || defined(_PLATFORM_TURRIS_)
 #include "ccsp_vendor.h"
@@ -72,10 +73,12 @@
 #define ACQUIRE_JWT		      1
 #define WEBPA_CFG_ACQUIRE_JWT	      "acquire-jwt"
 #define MAX_PROCESS_LEN				  16
+#define MAX_BUILD_LEN                 16
 #define CRUD_CONFIG_FILE             "/nvram/parodus_cfg.json"
 #define CURL_FILE_RESPONSE 	     "/tmp/adzvfchig-res.mch"
 #define PARCONNHEALTH_FILE	     "/tmp/parconnhealth.txt"
 #define GETCONF_FILE 		     "/usr/bin/GetConfigFile"
+#define MAX_PARTNERID_LEN              64
 
 #ifdef CONFIG_CISCO
 #define CONFIG_VENDOR_NAME  "Cisco"
@@ -121,8 +124,11 @@ int main(int argc, char *argv[])
 	char output[MAX_PROCESS_LEN] = {'\0'};
 	FILE *cmd = NULL;
 	const char *pid_cmd = "pidof parodus";
+        errno_t rc = -1;
+        int ind = -1;
+		int Wan_Status_Started = 0;
 	
-	get_parodusStart_logFile(parodusStart_Log);
+        get_parodusStart_logFile(parodusStart_Log);
 
 	g_fArmConsoleLog = freopen(parodusStart_Log, "a+", stderr);
 	if (NULL == g_fArmConsoleLog) 
@@ -134,11 +140,25 @@ int main(int argc, char *argv[])
 		LogInfo("Successful in opening parodusStart_Log file:%s\n", parodusStart_Log);
 	}
 	
-	if((argc > 1) && (NULL != argv[1]) && (!strcmp(argv[1], "wan-status")))
-	{
-		LogInfo("wan-status event received with state %s\n", argv[2]);
-		if ((NULL != argv[2]) && (!strcmp(argv[2], "started")))
+        if((argc > 1) && (NULL != argv[1]))
+        {
+                rc = strcmp_s("wan-status",strlen("wan-status"),argv[1],&ind);
+                ERR_CHK(rc);
+                if((!ind) && (rc == EOK))
 		{
+		    if(NULL != argv[2]) 
+		    {
+		        LogInfo("wan-status event received with state %s\n", argv[2]);
+			rc = strcmp_s("started",strlen("started"),argv[2],&ind);
+                        ERR_CHK(rc);
+                        if((!ind) && (rc == EOK))
+                        {
+				Wan_Status_Started = 1;
+			}
+		     }
+		     if (Wan_Status_Started)
+		     {
+                        
 			LogInfo("wan-status is ready. Proceed with parodus start up\n");	
 			if ((cmd = popen(pid_cmd, "r")) == NULL)
 			{
@@ -156,14 +176,15 @@ int main(int argc, char *argv[])
 				return;
 			}
 
-		}
-		else
-		{
-			LogInfo("wan-status is not ready , waiting to start parodus..\n");
-			if (NULL != g_fArmConsoleLog)
-			fclose(g_fArmConsoleLog);
-			return 0;
-		}
+		      }
+		      else
+		      {
+			  LogInfo("wan-status is not ready , waiting to start parodus..\n");
+			  if (NULL != g_fArmConsoleLog)
+			  fclose(g_fArmConsoleLog);
+			  return 0;
+		      }
+                 }
 	}
 	
 	char unreg_cmd[1024] = {'\0'};
@@ -179,10 +200,10 @@ int main(int argc, char *argv[])
 #else
 	CMMGMT_CM_DHCP_INFO dhcpinfo;
 #endif
-	char parodus_url[64] = {'\0'};
-        char seshat_url[64] = {'\0'};
-	char build_type[16] = {'\0'};
-	char partner_id[64] = {'\0'};
+	char parodus_url[MAX_SERVER_URL_SIZE] = {'\0'};
+        char seshat_url[MAX_SERVER_URL_SIZE] = {'\0'};
+	char build_type[MAX_BUILD_LEN] = {'\0'};
+	char partner_id[MAX_PARTNERID_LEN] = {'\0'};
 	char tempStr[64] = {'\0'};
 	char *webpaUrl = NULL;
 	cJSON *out = NULL;
@@ -205,9 +226,7 @@ int main(int argc, char *argv[])
 #if defined (START_PARODUS) && defined (UPDATE_CONFIG_FILE)
 	LogInfo("Proceeding to unregister wan-status event\n");
 
-        snprintf(unreg_cmd,sizeof(unreg_cmd),"/etc/utopia/registration.d/02_parodus stop");
-        LogInfo("unreg_cmd is %s\n", unreg_cmd);
-        system(unreg_cmd);
+	system("/etc/utopia/registration.d/02_parodus stop");
 #endif
         LogInfo("startParodus is enabled\n");
         if ( platform_hal_PandMDBInit() == 0)
@@ -256,22 +275,24 @@ int main(int argc, char *argv[])
         	LogError("Unable to get FirmwareName\n");
     	}
     	
-    	if(strlen(CONFIG_VENDOR_NAME) > 0)
-    	{
-         	strcpy(manufacturer, CONFIG_VENDOR_NAME);
-         	LogInfo("Manufacturer Name is %s\n", manufacturer);
 
-        }
-        else
+        rc = strcpy_s(manufacturer, sizeof(manufacturer), CONFIG_VENDOR_NAME);
+        if(rc != EOK)
         {
-         	LogError("Unable to get Manufacturer Name\n");
+            ERR_CHK(rc);
+            LogError("Failed to get manufacturer name\n");
         }
-    	
+        LogInfo("Manufacturer Name is %s\n", manufacturer);    	
     	
     	if (syscfg_init() != 0)
         {
         	LogError("syscfg init failure\n");
-		strcpy(final_lastRebootReason, "unknown");
+                rc = strcpy_s(final_lastRebootReason, sizeof(final_lastRebootReason), "unknown");
+                if(rc != EOK)
+                {
+                    ERR_CHK(rc);
+                    LogError("Failed to copy final_lastRebootReason\n");
+                }
         }
         else
         {
@@ -282,7 +303,12 @@ int main(int argc, char *argv[])
 		if(access( "/var/tmp/lastrebootreason" , F_OK ) != 0 && ( strlen(rebootCounter)>0 && atoi(rebootCounter) ==0 ))
 		{
 			LogInfo("/var/tmp/lastrebootreason file doesn't exist and rebootCounter is %s\n", rebootCounter);
-			strcpy(final_lastRebootReason, "unknown");
+                        rc = strcpy_s(final_lastRebootReason, sizeof(final_lastRebootReason), "unknown");
+                        if(rc != EOK)
+                        {
+                            ERR_CHK(rc);
+                            LogError("Failed to copy final_lastRebootReason as unknown\n");
+                        }
 		}
 		else
 		{
@@ -304,8 +330,13 @@ int main(int argc, char *argv[])
 #if defined(_COSA_BCM_MIPS_)
 	if( dpoe_getOnuId(&tDpoe_Mac) == 0)
 	{
-		sprintf(deviceMac, "%02x:%02x:%02x:%02x:%02x:%02x",tDpoe_Mac.macAddress[0], tDpoe_Mac.macAddress[1],
+                rc = sprintf_s(deviceMac, sizeof(deviceMac), "%02x:%02x:%02x:%02x:%02x:%02x",tDpoe_Mac.macAddress[0], tDpoe_Mac.macAddress[1],
                 tDpoe_Mac.macAddress[2], tDpoe_Mac.macAddress[3], tDpoe_Mac.macAddress[4],tDpoe_Mac.macAddress[5]);
+		if(rc < EOK)
+                {
+                   ERR_CHK(rc);
+                   LogError("Failed to copy deviceMac\n");
+                }
 		LogInfo("deviceMac is %s\n", deviceMac);
 	}
 #else
@@ -323,15 +354,40 @@ int main(int argc, char *argv[])
   
           
         char deviceMACValue[32] = { '\0' };
-        if( 0 == syscfg_get( NULL, "eth_wan_enabled", isEthEnabled, sizeof(isEthEnabled)) && (isEthEnabled[0] != '\0' && strncmp(isEthEnabled, "true", strlen("true")) == 0) && sysevent_get(fd, token, "eth_wan_mac", deviceMACValue, sizeof(deviceMACValue)) == 0 && deviceMACValue[0] != '\0')
+		int Eth_Enabled = 0;
+		
+		if(0 == syscfg_get( NULL, "eth_wan_enabled", isEthEnabled, sizeof(isEthEnabled)))
+		{
+		if (isEthEnabled[0] != '\0')
+		{
+		   rc = strcmp_s("true",strlen("true"),isEthEnabled,&ind);
+           ERR_CHK(rc);
+           if((!ind) && (rc == EOK))
+		   {
+			  Eth_Enabled = 1;
+		   }		   
+		}
+		}
+		
+        if( Eth_Enabled && sysevent_get(fd, token, "eth_wan_mac", deviceMACValue, sizeof(deviceMACValue)) == 0 && deviceMACValue[0] != '\0')
         {
-            strcpy(deviceMac, deviceMACValue);
+            rc = strcpy_s(deviceMac, sizeof(deviceMac), deviceMACValue);
+            if(rc != EOK)
+            {
+                ERR_CHK(rc);
+                LogError("Failed to Copy deviceMACValue to deviceMac\n");
+            }
             LogInfo("deviceMac is %s\n", deviceMac);
         }
         else if (cm_hal_GetDHCPInfo(&dhcpinfo) == 0)
         {
             LogInfo("MACAddress = %s\n", dhcpinfo.MACAddress);
-            strcpy(deviceMac, dhcpinfo.MACAddress);
+            rc = strcpy_s(deviceMac, sizeof(deviceMac), dhcpinfo.MACAddress);
+            if(rc != EOK)
+            {
+                ERR_CHK(rc);
+                LogError("Failed to Copy dhcpinfo.MACAddress to deviceMac\n");
+            }
             LogInfo("deviceMac is %s\n", deviceMac);
         }
 #endif
@@ -377,7 +433,7 @@ int main(int argc, char *argv[])
         }
 
          LogInfo("Fetch parodus url from device.properties file\n");
-	 get_url(parodus_url, seshat_url, build_type);
+         get_url(parodus_url, seshat_url, build_type);
 	 LogInfo("parodus_url returned is %s\n", parodus_url);
          LogInfo("seshat_url returned is %s\n", seshat_url);
 	 LogInfo("build_type returned is %s\n", build_type);
@@ -386,7 +442,7 @@ int main(int argc, char *argv[])
 	{
 		getValueFromCfgJson( WEBPA_CFG_SERVER_URL, &webpaUrl, &out);
 		LogInfo("webpaUrl fetched from webpa_cfg.json is %s\n", webpaUrl);
-		checkAndUpdateServerUrlFromDevCfg(&webpaUrl);
+        checkAndUpdateServerUrlFromDevCfg(&webpaUrl);
 		LogInfo("Framed webpa url is %s\n",webpaUrl);
 		if(out != NULL)
 		{
@@ -399,17 +455,42 @@ int main(int argc, char *argv[])
 		webpaUrl = strdup(WEBPA_SERVER_URL);
 	}
 
-	getPartnerId(partner_id);
-	LogInfo("PartnerID fetched is %s\n", partner_id);
-	if(partner_id[0] == '\0' || strcmp(partner_id, "unknown") == 0)
-	{
-	    strncpy(partner_id,"",sizeof(partner_id));
-	}
-	else
-	{
-	    strncpy(tempStr, partner_id, sizeof(tempStr));
-	    snprintf(partner_id,sizeof(partner_id),"*,%s",tempStr);
-	}
+        getPartnerId(partner_id);
+        LogInfo("PartnerID fetched is %s\n", partner_id);
+        int partnerid_invalid = 0;
+        if(partner_id[0] == '\0')
+        {
+             partnerid_invalid = 1;
+        }
+        else
+        {
+            rc = strcmp_s("unknown",strlen("unknown"),partner_id,&ind);
+            ERR_CHK(rc);
+            if((ind == 0) && (rc == EOK))
+            {
+                partnerid_invalid = 1;
+            }
+        }
+
+        if(partnerid_invalid)
+        {
+           partner_id[0] = '\0';
+        }
+        else
+        {
+                rc = strcpy_s(tempStr, sizeof(tempStr), partner_id);
+                if(rc != EOK)
+                {
+                    ERR_CHK(rc);
+                    goto RETURN_ERROR;
+                }
+                rc = sprintf_s(partner_id,sizeof(partner_id),"*,%s",tempStr);
+                if(rc < EOK)
+                {
+                    ERR_CHK(rc);
+                    goto RETURN_ERROR;
+                }
+    }
 	LogInfo("PartnerID framed is %s\n", partner_id);
 
 	getValueFromCfgJson( WEBPA_CFG_ACQUIRE_JWT, &acquireJwt, &out);
@@ -430,8 +511,14 @@ int main(int argc, char *argv[])
 	decodeStatus = executeConfigFile();
 	if(decodeStatus == 0)
 	{
-		strncpy(client_cert_path, CURL_FILE_RESPONSE, sizeof(client_cert_path));
-		LogInfo("client_cert_path is %s\n", client_cert_path);
+                rc = strcpy_s(client_cert_path, sizeof(client_cert_path), CURL_FILE_RESPONSE);
+                if(rc != EOK)
+                {
+                    ERR_CHK(rc);
+                    LogError("Failed to get client_cert_path\n");
+                }
+                else
+                    LogInfo("client_cert_path is %s\n", client_cert_path);
 	}
 	else
 	{
@@ -441,21 +528,41 @@ int main(int argc, char *argv[])
 	LogInfo("Framing command for parodus\n");
 	//Enabling parodus by forcing to ipv4
 #if defined (ENABLE_SESHAT) && defined (FEATURE_DNS_QUERY)
-	snprintf(command, sizeof(command),
+        rc = sprintf_s(command, sizeof(command),
 	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=%s --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=erouter0 --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --seshat-url=%s --client-cert-path=%s --token-server-url=%s --acquire-jwt=%d --dns-txt-url=%s --jwt-public-key-file=%s --jwt-algo=RS256 --crud-config-file=%s --boot-time-retry-wait=%d &", 
         modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, seshat_url, client_cert_path, TOKEN_SERVER_URL, jwtFlag, DNS_TEXT_URL, JWT_KEY, CRUD_CONFIG_FILE, wait_time);
+       if(rc < EOK)
+       {
+          ERR_CHK(rc);
+          goto RETURN_ERROR;
+       }
 #elif defined ENABLE_SESHAT
-	snprintf(command, sizeof(command),
+       rc = sprintf_s(command, sizeof(command),
 	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=%s --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=erouter0 --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --seshat-url=%s --client-cert-path=%s --token-server-url=%s --crud-config-file=%s --boot-time-retry-wait=%d &", 
         modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, seshat_url, client_cert_path, TOKEN_SERVER_URL, CRUD_CONFIG_FILE, wait_time);
+     if(rc < EOK)
+     {
+        ERR_CHK(rc);
+        goto RETURN_ERROR;
+     }
 #elif defined FEATURE_DNS_QUERY
-	snprintf(command, sizeof(command),
+     rc = sprintf_s(command, sizeof(command),
 	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=%s --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=erouter0 --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --client-cert-path=%s --token-server-url=%s --acquire-jwt=%d --dns-txt-url=%s --jwt-public-key-file=%s --jwt-algo=RS256 --crud-config-file=%s --boot-time-retry-wait=%d &", 
         modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, client_cert_path, TOKEN_SERVER_URL, jwtFlag, DNS_TEXT_URL, JWT_KEY, CRUD_CONFIG_FILE, wait_time);
+    if(rc < EOK)
+    {
+        ERR_CHK(rc);
+        goto RETURN_ERROR;
+    }
 #else
-    snprintf(command, sizeof(command),
+    rc = sprintf_s(command, sizeof(command),
 	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=%s --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=erouter0 --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --client-cert-path=%s --token-server-url=%s --crud-config-file=%s --boot-time-retry-wait=%d &", 
         modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, client_cert_path, TOKEN_SERVER_URL, CRUD_CONFIG_FILE, wait_time);
+    if(rc < EOK)
+    {
+       ERR_CHK(rc);
+       goto RETURN_ERROR;
+    }
 #endif
 
 	LogInfo("parodus command formed is: %s\n", command);
@@ -476,7 +583,7 @@ int main(int argc, char *argv[])
 		webpaUrl = NULL;
 	}
 	/* Wait till PSM health is green before PSM DB sync */
-	waitForPSMHealth(PSM_COMPONENT_NAME);
+       waitForPSMHealth(PSM_COMPONENT_NAME);
 		
 	syncStatus = syncXpcParamsOnUpgrade(lastRebootReason, firmwareVersion);
 	if(syncStatus == 0)
@@ -492,7 +599,7 @@ int main(int argc, char *argv[])
 		LogInfo("DB sync is not required or failed to sync!!\n");
 	}
 	paramCount = sizeof(paramList)/sizeof(paramList[0]);
-	getValuesFromPsmDb(paramList, psmValues, paramCount);
+        getValuesFromPsmDb(paramList, psmValues, paramCount);
 	LogInfo("DB details are %s = %s %s = %s %s = %s\n",paramList[0],psmValues[0],paramList[1],psmValues[1],paramList[2],psmValues[2]);
 	for(i=0;i<paramCount;i++)
 	{
@@ -510,6 +617,16 @@ int main(int argc, char *argv[])
     	if (NULL != g_fArmConsoleLog)
 		fclose(g_fArmConsoleLog);
 	return 0;
+	
+RETURN_ERROR:
+       if(webpaUrl != NULL)
+       {
+          free(webpaUrl);
+          webpaUrl = NULL;
+       }
+       LogError("main function - RETURN_ERROR\n");
+       return -1;
+	
 }
 
 /*----------------------------------------------------------------------------*/
@@ -520,6 +637,7 @@ static void get_url(char *parodus_url, char *seshat_url, char *build_type)
 {
 
 	FILE *fp = fopen(DEVICE_PROPS_FILE, "r");
+        errno_t rc = -1;
 	
 	if (NULL != fp)
 	{
@@ -531,20 +649,39 @@ static void get_url(char *parodus_url, char *seshat_url, char *build_type)
 		    if(value = strstr(str, "PARODUS_URL="))
 		    {
 			value = value + strlen("PARODUS_URL=");
-			strncpy(parodus_url, value, (strlen(str) - strlen("PARODUS_URL=")));
+                    rc = strcpy_s(parodus_url, MAX_SERVER_URL_SIZE, value);
+                    if(rc != EOK)
+                    {
+                        ERR_CHK(rc);
+						fclose(fp);
+                        return;
+                    }
+					
 		    }
 		    
-                    if(value = strstr(str, "SESHAT_URL="))
-                    {
-                        value = value + strlen("SESHAT_URL=");
-                        strncpy(seshat_url, value, (strlen(str) - strlen("SESHAT_URL=")));
-                    }
+            else if(value = strstr(str, "SESHAT_URL="))
+            {
+                value = value + strlen("SESHAT_URL=");
+                rc = strcpy_s(seshat_url, MAX_SERVER_URL_SIZE, value);
+		        if(rc != EOK)
+		        {
+                    ERR_CHK(rc);
+					fclose(fp);
+                    return;
+		        }
+            }
 
-		     if(value = strstr(str, "BUILD_TYPE="))
-                    {
-                        value = value + strlen("BUILD_TYPE=");
-                        strncpy(build_type, value, (strlen(str) - strlen("BUILD_TYPE="))+1);
-                    }
+		    else if(value = strstr(str, "BUILD_TYPE="))
+            {
+                value = value + strlen("BUILD_TYPE=");
+                rc = strcpy_s(build_type, MAX_BUILD_LEN, value);
+		        if(rc != EOK)
+		        {
+                    ERR_CHK(rc);
+		    		fclose(fp);
+                    return;
+                }
+            }
 		}
           /*Covrity Fix: CID 73480*/
                 fclose(fp);  
@@ -577,39 +714,33 @@ static void get_url(char *parodus_url, char *seshat_url, char *build_type)
 	LogInfo("parodus_url formed is %s\n", parodus_url);	
         LogInfo("seshat_url formed is %s\n", seshat_url);
 	LogInfo("build_type is %s\n", build_type);
-
- }
+}
  
 static void getPartnerId(char *partner_id)
 {
+    errno_t rc = -1;
 	FILE 	*file = NULL;
-	char 	*name = "/lib/rdk/getpartnerid.sh";
-	char 	*arg = "GetPartnerID";
-	char 	buffer [ 64 ] = { 0 };
-	char 	command[256] = {0};
-	if( 0 == syscfg_get( NULL, "PartnerID", buffer, sizeof(buffer)))
+
+    if( 0 == syscfg_get(NULL, "PartnerID", partner_id, MAX_PARTNERID_LEN))
 	{
-	   if(buffer[0] != '\0')
-	   {
-	   sprintf( partner_id, "%s", buffer );
-	   return;
-	   }
-	}
-	memset(buffer,0,sizeof(buffer));
-	memset(command,0,sizeof(command));
-	snprintf(command,sizeof(command),"%s %s",name,arg);
-	file = popen ( command, "r" );
+	    if( *partner_id != '\0')
+	    {
+           return;
+        }
+    }
+    
+    file = popen("/lib/rdk/getpartnerid.sh GetPartnerID", "r");
+
 	if(file)
 	{
 	   char *pos;
-	   fgets ( buffer, 64, file );
+	   fgets ( partner_id, 64, file );
 	   pclose ( file );
 	   file = NULL;
 
-	   if ( ( pos = strchr( buffer, '\n' ) ) != NULL ) {
+	   if ( ( pos = strchr( partner_id, '\n' ) ) != NULL ) {
 		   *pos = '\0';
 	   }
-	   sprintf( partner_id, "%s", buffer );
 	}
 	else
 	{
@@ -683,6 +814,7 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 	cJSON *json = NULL;
 	FILE *fileRead;
 	int len = 0,n = 0;
+        errno_t rc = -1;
 	fileRead = fopen( WEBPA_CFG_FILE, "r+" );    
 	if( fileRead == NULL ) 
 	{
@@ -721,8 +853,6 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
   
                 data[n] = '\0';
             
-  
-
 	fclose( fileRead );
         
         
@@ -803,7 +933,13 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 			{
 			        int valFromJson = cJSON_GetObjectItem( json, key)->valueint;
 	                        *value = (char *) malloc(sizeof(char) * MAX_VALUE_SIZE);
-	                        snprintf(*value, MAX_VALUE_SIZE,"%d",valFromJson);
+                            rc = sprintf_s(*value, MAX_VALUE_SIZE,"%d",valFromJson);
+                            if(rc < EOK)
+                            {
+                               ERR_CHK(rc);
+                               free(data);
+		               return;
+                             }
 			}
 			else
 			{
@@ -848,6 +984,7 @@ static int writeToJson(char *data)
 static void getValuesFromPsmDb(char *names[], char **values,int count)
 {
     FILE* out = NULL;
+    errno_t rc = -1;
     char command[MAX_BUF_SIZE]={'\0'};
     char buf[MAX_BUF_SIZE] = {'\0'};
     char tempBuf[MAX_BUF_SIZE] ={'\0'};
@@ -856,10 +993,20 @@ static void getValuesFromPsmDb(char *names[], char **values,int count)
 
     for(i=0; i<count; i++)
     {
-        offset += snprintf(tempBuf + offset, sizeof(tempBuf) - offset, " %dX %s%s", i, pathPrefix, names[i]);
+        rc = sprintf_s(tempBuf + offset, sizeof(tempBuf) - offset, " %dX %s%s", i, pathPrefix, names[i]);
+        if(rc < EOK)
+        {
+           ERR_CHK(rc);
+           return;
+        }
+        offset += rc;
     }
-
-    snprintf(command, sizeof(command),"psmcli get -e%s", tempBuf);
+    rc = sprintf_s(command, sizeof(command),"psmcli get -e%s", tempBuf);
+    if(rc < EOK)
+    {
+        ERR_CHK(rc);
+        return;
+    }
     LogInfo("command : %s\n",command);
 
     out = popen(command, "r");
@@ -875,10 +1022,16 @@ static void getValuesFromPsmDb(char *names[], char **values,int count)
                     *t = '\0';
                 if(sscanf(buf, "%dX=\"%s\n", &index, temp)  == 2 && index == i) {
                     values[i] = (char *) malloc(sizeof(char)* MAX_VALUE_SIZE);
-                    strcpy(values[i], temp);
+                    rc = strcpy_s(values[i], MAX_VALUE_SIZE, temp);
+                    if(rc != EOK)
+                    {
+                        ERR_CHK(rc);
+						pclose(out);
+                        return;
+                    }
                 }
             }
-            if(out && feof(out))
+            if(feof(out))
             {
                 LogInfo("End of file reached\n");
                 break;
@@ -900,13 +1053,24 @@ static int setValuesToPsmDb(char *names[], char **values,int count)
     int i = 0, ret=0;
     char tempBuf[MAX_BUF_SIZE] ={0};
     int offset = 0;
+    errno_t rc = -1;
 
     for(i=0; i<count; i++)
     {
-        offset += snprintf(tempBuf + offset, sizeof(tempBuf) - offset, " %s%s %s", pathPrefix,names[i], values[i]);
+        rc = sprintf_s(tempBuf + offset, sizeof(tempBuf) - offset, " %s%s %s", pathPrefix,names[i], values[i]);
+        if(rc < EOK)
+        {
+           ERR_CHK(rc);
+           return -1;
+        }
+        offset += rc;
     }
-
-    snprintf(command, sizeof(command),"psmcli set%s", tempBuf);
+    rc = sprintf_s(command, sizeof(command),"psmcli set%s", tempBuf);
+    if(rc < EOK)
+    {
+        ERR_CHK(rc);
+        return -1;
+    }
     LogInfo("command : %s\n",command);
     out = popen(command, "r");
     if(out)
@@ -940,13 +1104,19 @@ static int setValuesToPsmDb(char *names[], char **values,int count)
 static void getValuesFromSysCfgDb(char *names[], char **values,int count)
 {
     int i = 0;
+    errno_t rc = -1;
     for(i=0; i<count; i++)
     {
     	char temp[MAX_VALUE_SIZE] ={'\0'};
         if(syscfg_get( NULL, names[i], temp, MAX_VALUE_SIZE) == 0)
         {
 	    	values[i] = (char *) malloc(sizeof(char)* MAX_VALUE_SIZE);
-	    	strcpy(values[i], temp);
+                rc = strcpy_s(values[i], MAX_VALUE_SIZE, temp);
+                if(rc != EOK)
+                {
+                    ERR_CHK(rc);
+                    return;
+                }
         }
     }
 }
@@ -961,6 +1131,9 @@ static int syncXpcParamsOnUpgrade(char *lastRebootReason, char *firmwareVersion)
 	char *sysCfgValues[MAX_VALUE_SIZE] = {'\0'};
 	int configUpdateStatus = -1;
 	char *cJsonOut =NULL;
+        errno_t rc = -1;
+        int ind = -1;
+        int parodus_enable = 0;
 
 	paramCount = sizeof(paramList)/sizeof(paramList[0]);
 	getValueFromCfgJson( WEBPA_CFG_FIRMWARE_VER, &cfgJson_firmware, &out);
@@ -998,8 +1171,7 @@ static int syncXpcParamsOnUpgrade(char *lastRebootReason, char *firmwareVersion)
 		LogError("Error in fetching data from webpa_cfg.json file\n");
 	}
 
-	
-	getValuesFromPsmDb(paramList, psmValues, paramCount);
+        getValuesFromPsmDb(paramList, psmValues, paramCount);
 	for(i = 0; i<paramCount; i++)
 	{
 	        if(psmValues[i] == NULL)
@@ -1018,11 +1190,26 @@ static int syncXpcParamsOnUpgrade(char *lastRebootReason, char *firmwareVersion)
 	}
 	
 	/* To check if it is an upgrade from release image to parodus ON */
-	
-	if((strcmp(lastRebootReason,"Software_upgrade")==0 || ((cfgJson_firmware != NULL) && (strlen(cfgJson_firmware)>0) && (strcmp(firmwareVersion, cfgJson_firmware))!=0)) && ((psmValues[0] != NULL && atoi(psmValues[0]) ==0) && (psmValues[1] != NULL && strcmp(psmValues[1], "0")==0) && (psmValues[2] != NULL && strcmp(psmValues[2] ,"0")==0)))
+        rc = strcmp_s("Software_upgrade",strlen("Software_upgrade"),lastRebootReason,&ind);
+        ERR_CHK(rc);
+        if((ind == 0) && (rc == EOK))
+        {
+            parodus_enable =1;
+        }
+        else if ((cfgJson_firmware != NULL) && (strlen(cfgJson_firmware)>0))
+        {
+             rc = strcmp_s(firmwareVersion,strlen(firmwareVersion),cfgJson_firmware,&ind);
+             ERR_CHK(rc);
+             if((ind != 0) && (rc == EOK))
+             {
+                 parodus_enable = 1;
+             }
+        }
+		
+    if( parodus_enable && ((psmValues[0] != NULL && atoi(psmValues[0]) ==0) && (psmValues[1] != NULL && atoi(psmValues[1]) ==0) && (psmValues[2] != NULL && atoi(psmValues[2]) ==0))) 
 	{
 		LogInfo("sync for bbhm and syscfg is required. Proceeding with DB sync..\n");
-		getValuesFromSysCfgDb(paramList, sysCfgValues, paramCount);
+               getValuesFromSysCfgDb(paramList, sysCfgValues, paramCount);
 		
 		if(cfgJson_firmware != NULL)
 		{
@@ -1055,7 +1242,7 @@ static int syncXpcParamsOnUpgrade(char *lastRebootReason, char *firmwareVersion)
     			free_sync_db_items(paramCount, psmValues, sysCfgValues);
     			return -2;
     		}
-	}
+    }
 	else
 	{
 		LogInfo("Sync for bbhm and syscfg is not required\n");
@@ -1097,6 +1284,7 @@ static void get_parodusStart_logFile(char *parodusStart_Log)
 {
 
 	FILE *fp = fopen(DEVICE_PROPS_FILE, "r");
+        errno_t rc = -1;
 	
 	if (NULL != fp)
 	{
@@ -1108,7 +1296,13 @@ static void get_parodusStart_logFile(char *parodusStart_Log)
 		    if(value = strstr(str, "PARODUS_START_LOG_FILE="))
 		    {
 			value = value + strlen("PARODUS_START_LOG_FILE=");
-			strncpy(parodusStart_Log, value, (strlen(str) - strlen("PARODUS_START_LOG_FILE="))+1);
+                        rc = strcpy_s(parodusStart_Log, MAX_BUF_SIZE, value);
+                        if(rc != EOK)
+                        {
+                            ERR_CHK(rc);
+                            fclose(fp);
+                            return;
+                        }
 		    }
 		    
 		}
@@ -1127,7 +1321,6 @@ static void get_parodusStart_logFile(char *parodusStart_Log)
 	{
 		LogInfo("PARODUS_START_LOG_FILE is %s\n", parodusStart_Log);	
 	}	
- 
  }
 
 /**
@@ -1165,13 +1358,14 @@ static void checkAndUpdateServerUrlFromDevCfg(char **serverUrl)
     char *tempUrl = NULL;
     cJSON *out = NULL;
     char *serverPort = NULL;
+    errno_t rc = -1;
       
       if (*serverUrl == NULL ) {
              LogError(" **serverUrl is NULL \n");
           return;
       }
-     
-    
+
+
       tempUrl = strndup(*serverUrl, MAX_SERVER_URL_SIZE);
             if(checkServerUrlFormat(tempUrl) != 1 && strstr(tempUrl, "comcast") != NULL)
             {
@@ -1187,7 +1381,12 @@ static void checkAndUpdateServerUrlFromDevCfg(char **serverUrl)
                        return;
                     }  
                     
-                    snprintf(*serverUrl, MAX_SERVER_URL_SIZE, "https://%s:%s",tempUrl,serverPort);                      
+                    rc = sprintf_s(*serverUrl, MAX_SERVER_URL_SIZE, "https://%s:%s",tempUrl,serverPort);
+                    if(rc < EOK)
+                    {
+                       ERR_CHK(rc);
+                       LogError("Error in updating server URL\n");
+                    }
                     free(serverPort);
                     cJSON_Delete(out);
                 }
@@ -1208,12 +1407,24 @@ static void waitForPSMHealth(char *compName)
 	char comp_status_cmd[128] = {0};
 	char parameter_name[128]= {0};
 	char comp_status[32]= {0};
+        errno_t rc = -1;
+		int ind = -1;
 	
-	snprintf(parameter_name,sizeof(parameter_name),"%s.%s",compName,"Health");
+        rc = sprintf_s(parameter_name,sizeof(parameter_name),"%s.%s",compName,"Health");
+        if(rc < EOK)
+        {
+           ERR_CHK(rc);
+	       return;
+        }
 	
 	while(1)
 	{
-		snprintf(comp_status_cmd,sizeof(comp_status_cmd), "dmcli eRT getv com.cisco.spvtg.ccsp.psm.Health | grep value | awk '{print $5}'");
+        rc = sprintf_s(comp_status_cmd, sizeof(comp_status_cmd), "dmcli eRT getv com.cisco.spvtg.ccsp.psm.Health | grep value | awk '{print $5}'");
+        if(rc < EOK)
+        {
+           ERR_CHK(rc);
+           return;
+        }
 		
 		FILE *f;
     		if ((f = popen(comp_status_cmd, "r")) == NULL) 
@@ -1226,7 +1437,9 @@ static void waitForPSMHealth(char *compName)
         		LogError("Error in fscanf() return\n");
     		pclose(f);
 
-		if(strncmp(comp_status, "Green", 5) == 0)
+        rc = strcmp_s("Green",strlen("Green"),comp_status,&ind);
+        ERR_CHK(rc);
+        if((ind == 0) && (rc == EOK))
 		{
 			break;
 		}

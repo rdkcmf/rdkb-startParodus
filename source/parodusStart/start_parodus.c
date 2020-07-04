@@ -167,8 +167,9 @@ int main(int argc, char *argv[])
 	}
 	
 	char unreg_cmd[1024] = {'\0'};
-	char modelName[64]={'\0'};
-	char serialNumber[64]={'\0'};
+	/*Coverity Fix CID:78992,78513  */
+	char modelName[256]={'\0'};
+	char serialNumber[256]={'\0'};
 	char firmwareVersion[64]={'\0'};
 	char lastRebootReason[64]={'\0'};
 	char deviceMac[64]={'\0'};
@@ -311,6 +312,16 @@ int main(int argc, char *argv[])
         char isEthEnabled[64]={'\0'};
         token_t  token;
         int fd = s_sysevent_connect(&token);
+       
+        /*Coverity Fix:CID 63390 CHECKED_RETURN */
+        if(fd < 0 )
+        {  
+            LogError("s_sysevent_connect() is returned Error\n");
+            return -1;
+        }  
+       
+  
+          
         char deviceMACValue[32] = { '\0' };
         if( 0 == syscfg_get( NULL, "eth_wan_enabled", isEthEnabled, sizeof(isEthEnabled)) && (isEthEnabled[0] != '\0' && strncmp(isEthEnabled, "true", strlen("true")) == 0) && sysevent_get(fd, token, "eth_wan_mac", deviceMACValue, sizeof(deviceMACValue)) == 0 && deviceMACValue[0] != '\0')
         {
@@ -535,12 +546,15 @@ static void get_url(char *parodus_url, char *seshat_url, char *build_type)
                         strncpy(build_type, value, (strlen(str) - strlen("BUILD_TYPE="))+1);
                     }
 		}
+          /*Covrity Fix: CID 73480*/
+                fclose(fp);  
 	}
 	else
 	{
 		LogError("Failed to open device.properties file:%s\n", DEVICE_PROPS_FILE);
+              
 	}
-	fclose(fp);
+	
 	
 	if (0 == parodus_url[0])
 	{
@@ -678,6 +692,16 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 	
 	fseek( fileRead, 0, SEEK_END );
 	len = ftell( fileRead );
+        
+        /*Coverity Fix CID 70708 */
+        if(len < 0 )
+        {
+          
+           LogError("ftell failed\n");
+            fclose( fileRead );
+            return;
+        } 
+        
 	fseek( fileRead, 0, SEEK_SET );
 	data = ( char* )malloc( sizeof(char) * (len + 1) );
          if (!data) {
@@ -687,11 +711,13 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
         } 
           /* Coverity fix CID: 135424 STRING_SIZE NULL */
           n = fread( data, 1, len, fileRead );
+             
              if (n <= 0) {
                 LogInfo("webpa_cfg.json is empty\n");
                 fclose( fileRead );
                 return;
             }
+             
   
                 data[n] = '\0';
             
@@ -710,6 +736,16 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 	        cJSON *tmpjson = NULL;
 			char * newPtr = NULL;
 			newPtr = (char *)realloc(data,len + 2);
+                       
+                        /* Coverity FIX  CID:66205 REVERSE_INULL */
+                        if(newPtr == NULL)
+		        {
+                            LogError("Json parser failed due to newPtr is NULL\n");
+                            return;
+                        }
+                       
+               
+                          	
 			ptr = strstr(newPtr,WEBPA_CFG_MAX_PING_WAIT);
 			if(ptr)
 			{
@@ -721,7 +757,7 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 					if(ptr[nlen-1] != ',')
 					{
 						ptr[nlen] = ',';
-						tmpjson = cJSON_Parse( newPtr );
+                                        	tmpjson = cJSON_Parse( newPtr );
 						if(tmpjson)
 						{
 							char *output = cJSON_Print(tmpjson);
@@ -742,10 +778,9 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 					}
 				}
 			}
-			if(newPtr)
-			{
-				free(newPtr);
-			}
+			
+			free(newPtr);
+			
 	    } 
 	    else 
 	    {
@@ -788,7 +823,9 @@ void getValueFromCfgJson( char *key, char **value, cJSON **out)
 	else
 	{
 		LogInfo("webpa_cfg.json is empty\n");
-                return;
+                 if(data != NULL)
+                     free(data);
+		 return;
 	}
 }
 
@@ -969,6 +1006,9 @@ static int syncXpcParamsOnUpgrade(char *lastRebootReason, char *firmwareVersion)
 	        {
 	        	LogInfo("PsmDb-> value is NULL for %s\n",paramList[i]);
 	        	free_sync_db_items(paramCount, psmValues, sysCfgValues);
+			/* Coverity Fix CID:53686 RESOURCE_LEAK  */
+                          if( cfgJson_firmware != NULL)
+                                free(cfgJson_firmware);
 	        	return -1;
 	        }
 	        else
@@ -1122,14 +1162,17 @@ static int checkServerUrlFormat(char *serverUrl)
  */
 static void checkAndUpdateServerUrlFromDevCfg(char **serverUrl)
 {
-    char *tempUrl;
+    char *tempUrl = NULL;
     cJSON *out = NULL;
     char *serverPort = NULL;
-    if(*serverUrl != NULL)
-    {
-        tempUrl = strndup(*serverUrl, MAX_SERVER_URL_SIZE);
-        if(tempUrl != NULL && strlen(tempUrl) > 0)
-        {
+      
+      if (*serverUrl == NULL ) {
+             LogError(" **serverUrl is NULL \n");
+          return;
+      }
+     
+    
+      tempUrl = strndup(*serverUrl, MAX_SERVER_URL_SIZE);
             if(checkServerUrlFormat(tempUrl) != 1 && strstr(tempUrl, "comcast") != NULL)
             {
                 getValueFromCfgJson( "ServerPort", &serverPort, &out);
@@ -1137,11 +1180,15 @@ static void checkAndUpdateServerUrlFromDevCfg(char **serverUrl)
                 {
                     LogInfo("ServerPort fetched from webpa_cfg.json is %s\n", serverPort);
                     free(*serverUrl);
-                    *serverUrl = NULL;
                     *serverUrl = (char *) malloc(sizeof(char) * MAX_SERVER_URL_SIZE);
-                    snprintf(*serverUrl, MAX_SERVER_URL_SIZE, "https://%s:%s",tempUrl,serverPort);
+                    if( *serverUrl == NULL)
+                    {
+                      LogError("Error in serverUrl malloc\n");
+                       return;
+                    }  
+                    
+                    snprintf(*serverUrl, MAX_SERVER_URL_SIZE, "https://%s:%s",tempUrl,serverPort);                      
                     free(serverPort);
-                    serverPort = NULL;
                     cJSON_Delete(out);
                 }
                 else
@@ -1149,11 +1196,11 @@ static void checkAndUpdateServerUrlFromDevCfg(char **serverUrl)
                     LogError("Error in fetching data from webpa_cfg.json file\n");
                     *serverUrl = NULL;
                 }
+                      
+
             }
             free(tempUrl);
-            tempUrl = NULL;
-        }
-    }
+           
 }
 static void waitForPSMHealth(char *compName)
 {
@@ -1174,7 +1221,9 @@ static void waitForPSMHealth(char *compName)
         		LogError("Error in getting status\n");
         		return;
         	}
-		fscanf(f,"%s",comp_status);       	
+                /* Coverity Fix CID:62204 CHECKED_RETURN */
+		if( fscanf(f,"%s",comp_status) == EOF )      	
+        		LogError("Error in fscanf() return\n");
     		pclose(f);
 
 		if(strncmp(comp_status, "Green", 5) == 0)
@@ -1248,7 +1297,10 @@ static int executeConfigFile()
 		else
 		{
 			LogInfo("child process pid running %d, killing it\n", pid);
-			kill(pid, SIGKILL);
+			/*Coverity Fix CID:104370 CHECKED_RETURN */
+                        if( kill(pid, SIGKILL) < 0 )
+			   LogError("child process pid running %d, is not  killed successfully\n", pid);
+				
 		}
 	}
 

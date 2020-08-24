@@ -40,7 +40,7 @@
 #endif
 #include "cJSON.h"
 
-#ifdef _PLATFORM_RASPBERRYPI_
+#if defined(_PLATFORM_RASPBERRYPI_) || defined(_PLATFORM_TURRIS_)
 #include "ccsp_vendor.h"
 #endif
 

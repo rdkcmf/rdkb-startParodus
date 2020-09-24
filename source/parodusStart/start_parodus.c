@@ -35,6 +35,8 @@
 #include <ccsp/platform_hal.h>
 #include <ccsp/cm_hal.h>
 #include <sysevent/sysevent.h>
+#include <sys/stat.h>
+
 #if !(_COSA_BCM_MIPS_ || _COSA_DRG_TPG_ || CONFIG_CISCO)
 #include <autoconf.h>
 #endif
@@ -106,7 +108,14 @@ static void free_sync_db_items(int paramCount,char *psmValues[],char *sysCfgValu
 static void get_parodusStart_logFile(char *parodusStart_Log);
 static void checkAndUpdateServerUrlFromDevCfg(char **serverUrl);
 static char *pathPrefix  = "eRT.com.cisco.spvtg.ccsp.webpa.";
+
+#if defined(XPKI_CERT_SUPPORT)
+static int executeConfigFile(char *srcCfg);
+static int getDeviceConfigFile( );
+#else
 static int executeConfigFile();
+#endif
+
 FILE* g_fArmConsoleLog = NULL;
 /*----------------------------------------------------------------------------*/
 /*                             External Functions                             */
@@ -427,7 +436,11 @@ int main(int argc, char *argv[])
 	}
 	LogInfo("acquire-jwt is %d\n",jwtFlag);
 
+#if defined(XPKI_CERT_SUPPORT)
+	decodeStatus = getDeviceConfigFile();
+#else
 	decodeStatus = executeConfigFile();
+#endif
 	if(decodeStatus == 0)
 	{
 		strncpy(client_cert_path, CURL_FILE_RESPONSE, sizeof(client_cert_path));
@@ -1248,7 +1261,8 @@ static void waitForPSMHealth(char *compName)
 	LogInfo("%s component health is green, continue\n",parameter_name);
 }
 
-static int executeConfigFile()
+#if !defined(XPKI_CERT_SUPPORT)
+static int executeConfigFile( )
 {
 	int rv = -1;
 	FILE* out = NULL, *file = NULL;
@@ -1279,9 +1293,98 @@ static int executeConfigFile()
 
 		pid = getpid();
 		LogInfo("child process execution with pid:%d\n", pid);
-
 		ret = execl(GETCONF_FILE, "GetConfigFile", CURL_FILE_RESPONSE, (char *)0);
+		exit(0);
+	}
+	else
+	{
+		pid_t cpid = waitpid(pid, &status, 0);
+		LogInfo("cpid returned from waitpid %d status %d\n", cpid, status);
+		if (WIFEXITED(status))
+		{
+			LogInfo("child %d terminated with status: %d\n", cpid, WEXITSTATUS(status));
+		}
+		else
+		{
+			LogInfo("child process pid running %d, killing it\n", pid);
+			/*Coverity Fix CID:104370 CHECKED_RETURN */
+			if( kill(pid, SIGKILL) < 0 )
+			{
+				LogError("child process pid running %d, is not  killed successfully\n", pid);
+			}
+		}
+	}
 
+	out = fopen(CURL_FILE_RESPONSE, "r");
+	if(out)
+	{
+		LogInfo("decode file generated successfully\n");
+		fclose(out);
+		rv = 0;
+	}
+	else
+	{
+		LogError("Failure in CFG response\n");
+		return rv;
+	}
+	return rv;
+
+}
+
+#else
+
+#define CERT_NAME			"devicecert_1.pk12"
+#define DEVICE_CERT_PATH	"/nvram/certs"
+#define DEVICE_CERT			"/nvram/certs/devicecert_1.pk12"
+#define STATIC_CERT			"/etc/ssl/certs/staticXpkiCrt.pk12"
+#define RDKSSACLI			"/usr/bin/rdkssacli"
+#define RDKSSAINIT			"/usr/bin/rdkssacertcheck.sh"
+#define OPENSSL_EXE			"/usr/bin/openssl"
+#define OPSSLOUT			"/tmp/.adzvfchig.crt"
+#define STATIC_CFG_IN		"/tmp/.cfgStaticxpki"
+#define DYNAMIC_CFG_IN		"/tmp/.cfgDynamicxpki"
+
+#define CFG_IN_LENGTH		20
+#define MAX_FILE_TO_READ	256
+#define MAX_FILE_NAME_LN	128
+
+static int executeConfigFile(char *srcCfg)
+{
+	int rv = -1;
+	FILE* out = NULL, *file = NULL;
+	pid_t pid;
+	int status;
+	int ret = -1;
+
+	if(srcCfg == NULL)
+	{
+		LogError("Error: null cfg passed\n");
+		return rv;
+	}
+
+	file = fopen(GETCONF_FILE, "r");
+	if(file)
+	{
+		LogInfo("Proceeding with GetConfigFile\n");
+		fclose(file);
+	}
+	else
+	{
+		LogError("Error: GetConfigFile Not Found\n");
+		return rv;
+	}
+
+	if ((pid = fork()) == -1)
+	{
+		LogError("fork failed\n");
+		return rv;
+	}
+
+	if(pid == 0)
+	{
+		pid = getpid();
+		LogInfo("child process execution with pid:%d\n", pid);
+		ret = execl(GETCONF_FILE, "GetConfigFile", srcCfg, (char *)0);
 		exit(0);
 	}
 	else
@@ -1298,24 +1401,271 @@ static int executeConfigFile()
 		{
 			LogInfo("child process pid running %d, killing it\n", pid);
 			/*Coverity Fix CID:104370 CHECKED_RETURN */
-                        if( kill(pid, SIGKILL) < 0 )
-			   LogError("child process pid running %d, is not  killed successfully\n", pid);
-				
+			if( kill(pid, SIGKILL) < 0 )
+			{
+				LogError("child process pid running %d, is not  killed successfully\n", pid);
+			}
 		}
 	}
 
-	out = fopen(CURL_FILE_RESPONSE, "r");
+	out = fopen(srcCfg, "r");
 	if(out)
 	{
-		LogInfo("CEDM decode file generated successfully\n");
+		LogInfo("cfg input created\n");
 		fclose(out);
 		rv = 0;
 	}
 	else
 	{
-		LogError("Failure in CFG response\n");
+		LogError("failed to create cfg in file\n");
 		return rv;
 	}
 	return rv;
 
 }
+
+
+static int pk12topem(char *xpkiSrc, char *cfStrig)
+{
+	int rv = -1;
+	pid_t pid;
+	int status;
+	int ret = -1;
+	char cfStrigLocal[CFG_IN_LENGTH]={0};
+	FILE* outOpssl = (FILE* )NULL;
+	FILE* curRFp = (FILE* )NULL;
+	char buf[MAX_FILE_TO_READ];
+
+	if((xpkiSrc == NULL) || (cfStrig == NULL))
+	{
+		LogError("Error: Null value for xpkiSrc or cfgval passed\n");
+		return rv;
+	}
+
+	if ((pid = fork()) == -1)
+	{
+		LogError("fork failed\n");
+		return rv;
+	}
+
+	if(pid == 0)
+	{
+		pid = getpid();
+		LogInfo("pk12topem proc pid:%d \n", pid);
+		snprintf(cfStrigLocal, sizeof(cfStrigLocal), "%s%s","pass:",cfStrig);
+		ret = execl(OPENSSL_EXE, "openssl", "pkcs12","-nodes", "-password", cfStrigLocal, "-in", xpkiSrc,"-out", OPSSLOUT, (char *)0);
+		exit(0);
+	}
+	else
+	{
+		pid_t cpid = waitpid(pid, &status, 0);
+		LogInfo("pk12topem cpid returned from waitpid %d status %d\n", cpid, status);
+		if (WIFEXITED(status))
+		{
+			LogInfo("pk12topem child %d terminated. status: %d\n", cpid, WEXITSTATUS(status));
+		}
+		else
+		{
+			LogInfo("pk12topem cpid running %d, killing it\n", pid);
+			if( kill(pid, SIGKILL) < 0 )
+			{
+				LogError("pk12topem cpid running %d, is not killed\n", pid);
+			}
+		}
+	}
+/*
+** Converting the pk12 file onto the pemfile
+** This is required to keep the parodus interface same
+** webpa/parodus servers accept file only in following format
+*/
+	outOpssl = fopen(OPSSLOUT, "r");
+	if(outOpssl)
+	{
+		if((curRFp = fopen(CURL_FILE_RESPONSE, "w")) == NULL)
+		{
+			LogError("pem file open failed \n");
+			fclose(outOpssl);
+			return rv;
+		}
+
+		while(fgets(buf, sizeof(buf)-1, outOpssl) != NULL) {
+			if((strstr(buf, "-BEGIN PRIVATE KEY-")) != NULL) {
+				fputs(buf, curRFp);
+				break;
+			}
+		}
+		while(fgets(buf, sizeof(buf)-1, outOpssl) != NULL) {
+			if((strstr(buf, "-END PRIVATE KEY-")) != NULL) {
+				fputs(buf, curRFp);
+				break;
+			}
+			fputs(buf, curRFp);
+		}
+
+		if( 0 != fseek(outOpssl,0,SEEK_SET) ) {
+			LogError("pem file seek failed \n");
+			fclose(curRFp);
+			fclose(outOpssl);
+			return rv;
+		}
+
+		while(fgets(buf, sizeof(buf)-1, outOpssl) != NULL) {
+			if((strstr(buf, "-BEGIN CERTIFICATE-")) != NULL) {
+				LogInfo("\n %s\n",buf);
+				fputs(buf, curRFp);
+				break;
+			}
+		}
+		while(fgets(buf, sizeof(buf)-1, outOpssl) != NULL) {
+			if((strstr(buf, "-END CERTIFICATE-")) != NULL) {
+				LogInfo("\n %s\n",buf);
+				fputs(buf, curRFp);
+				break;
+			}
+			fputs(buf, curRFp);
+		}
+		fclose(curRFp);
+		fclose(outOpssl);
+		remove(OPSSLOUT);
+		rv = 0;
+		LogInfo("pem file generated\n");
+	}
+	else
+	{
+		LogError("pem file creation failed \n");
+		return rv;
+	}
+	return rv;
+
+}
+
+static int spXpkiProcureCert()
+{
+	int rv = -1;
+	FILE* out = NULL, *file = NULL;
+	pid_t pid;
+	int status;
+	int ret = -1;
+	struct stat devFatrib;
+
+	if(stat(DEVICE_CERT, &devFatrib) == 0)
+	{
+		LogInfo("xpki cert already present\n");
+		return 0;
+	}
+
+	if( stat(RDKSSAINIT, &devFatrib) == 0 )
+	{
+		LogInfo("Proceeding with %s \n", RDKSSAINIT);
+		if ((pid = fork()) == -1)
+		{
+			LogError("fork failed\n");
+			return rv;
+		}
+		if(pid == 0)
+		{
+			pid = getpid();
+			LogInfo("child process execution with pid:%d\n", pid);
+			ret = execl(RDKSSAINIT, "rdkssacertcheck.sh", "nonotify", (char *)0);
+			exit(0);
+		}
+		else
+		{
+			pid_t cpid = waitpid(pid, &status, 0);
+			LogInfo("cpid returned from waitpid %d status %d\n", cpid, status);
+			if (WIFEXITED(status))
+			{
+				LogInfo("child %d terminated with status: %d\n", cpid, WEXITSTATUS(status));
+			}
+			else
+			{
+				LogInfo("child process pid running %d, killing it\n", pid);
+				if( kill(pid, SIGKILL) < 0 )
+					LogError("child process pid running %d, is not  killed successfully\n", pid);
+			}
+		}
+	}
+
+	if(stat(DEVICE_CERT, &devFatrib) == 0)
+	{
+		LogInfo("xpki cert procured\n");
+		rv = 0;
+	}
+	else
+	{
+		LogError("no device specific xpki cert created\n");
+		return rv;
+	}
+	return rv;
+
+}
+
+static int getDeviceConfigFile()
+{
+	int retStat=-1;
+	int xpkiProcureStatus;
+	int decodeStatus = -1;
+	struct stat devFatrib;
+	char cfgFile[MAX_FILE_NAME_LN]={0};
+	char xpkiSrc[MAX_FILE_NAME_LN]={0};
+	char cfgval[CFG_IN_LENGTH]={0};
+	size_t cfgLength = 0;
+	FILE *out;
+
+	if(stat(CURL_FILE_RESPONSE, &devFatrib) == 0)
+	{
+		LogInfo("%s available \n", CURL_FILE_RESPONSE);
+		retStat=0;
+	}
+	else
+	{
+		xpkiProcureStatus=spXpkiProcureCert();
+		if(xpkiProcureStatus == 0)
+		{
+			LogInfo("Using dynamic Xpki cer\n");
+			snprintf(cfgFile, sizeof(cfgFile),"%s",DYNAMIC_CFG_IN);
+			snprintf(xpkiSrc, sizeof(xpkiSrc),"%s",DEVICE_CERT);
+		}
+		else
+		{
+			LogInfo("Using static Xpki cer\n");
+			snprintf(cfgFile, sizeof(cfgFile),"%s",STATIC_CFG_IN);
+			snprintf(xpkiSrc, sizeof(xpkiSrc),"%s",STATIC_CERT);
+		}
+
+		decodeStatus = executeConfigFile(cfgFile);
+		if(decodeStatus != 0)
+		{
+			LogError("no config file\n");
+			return retStat;
+		}
+
+		out = fopen(cfgFile, "r");
+		if(out)
+		{
+			LogInfo("cfg file generated successfully\n");
+			if( fgets(cfgval, CFG_IN_LENGTH, out)!= NULL )
+			{
+				/*Remove the new lines cfg*/
+				cfgLength = strnlen(cfgval, CFG_IN_LENGTH);
+				while((cfgLength>0) && (cfgval[cfgLength-1] == '\n'))
+				{
+					--cfgLength;
+					cfgval[cfgLength] ='\0';
+				}
+				retStat=pk12topem( xpkiSrc, cfgval);
+			}
+			else
+			{
+				LogError("Failure in CFG file read failed\n");
+			}
+			memset(cfgval,0,sizeof(cfgval));
+			fclose(out);
+		}
+
+	}
+	return retStat;
+}
+
+#endif
+

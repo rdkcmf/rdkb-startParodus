@@ -192,7 +192,7 @@ int main(int argc, char *argv[])
 	char modelName[256]={'\0'};
 	char serialNumber[256]={'\0'};
 	char firmwareVersion[64]={'\0'};
-	char lastRebootReason[64]={'\0'};
+	char lastRebootReason[128]={'\0'};
 	char deviceMac[64]={'\0'};
 	char manufacturer[64]={'\0'};
 #if defined(_COSA_BCM_MIPS_)
@@ -218,7 +218,7 @@ int main(int argc, char *argv[])
 	char *psmValues[MAX_VALUE_SIZE] = {'\0'};
 	char *acquireJwt = NULL;
 	int jwtFlag;
-	char final_lastRebootReason[64] = {'\0'};
+	char final_lastRebootReason[128] = {'\0'};
     	char rebootCounter[8] = {'\0'};
 	char client_cert_path[128]={'\0'};
 	int decodeStatus = -1;
@@ -315,13 +315,19 @@ int main(int argc, char *argv[])
 			syscfg_get( NULL, "X_RDKCENTRAL-COM_LastRebootReason", lastRebootReason, sizeof(lastRebootReason));
 			LogInfo("lastRebootReason is %s\n", lastRebootReason);
 
-			// Strip all spaces from reboot reason to make it one word
+			// Strip all spaces and parentheses from reboot reason to make it one word
 			// This also prevents command line parsing issues due to value like '-s'
 			int i=0, j=0;
 			for(i=0; i < sizeof(lastRebootReason) && j < sizeof(final_lastRebootReason); i++) {
 				if(lastRebootReason[i] != ' ') {
-					final_lastRebootReason[j]=lastRebootReason[i];
-					j++;
+					if(lastRebootReason[i] != '(')
+					{
+						if(lastRebootReason[i] != ')')
+						{
+							final_lastRebootReason[j]=lastRebootReason[i];
+							j++;
+						}
+					}
 				}
 			}
 		}

@@ -35,6 +35,9 @@
 #include <ccsp/platform_hal.h>
 #include <ccsp/cm_hal.h>
 #include <sysevent/sysevent.h>
+#include <sys/wait.h>
+#include <syscfg/syscfg.h>
+#include <limits.h>
 #if !(_COSA_BCM_MIPS_ || _COSA_DRG_TPG_ || CONFIG_CISCO)
 #include <autoconf.h>
 #endif
@@ -108,6 +111,9 @@ static int syncXpcParamsOnUpgrade(char *lastRebootReason, char *firmwareVersion)
 static void free_sync_db_items(int paramCount,char *psmValues[],char *sysCfgValues[]);
 static void get_parodusStart_logFile(char *parodusStart_Log);
 static void checkAndUpdateServerUrlFromDevCfg(char **serverUrl);
+#if !defined(_COSA_BCM_MIPS_)
+int s_sysevent_connect (token_t *out_se_token);
+#endif
 static char *pathPrefix  = "eRT.com.cisco.spvtg.ccsp.webpa.";
 static int executeConfigFile();
 FILE* g_fArmConsoleLog = NULL;
@@ -163,17 +169,18 @@ int main(int argc, char *argv[])
 			if ((cmd = popen(pid_cmd, "r")) == NULL)
 			{
 				LogError("Error in getting parodus pid \n");
-				return;
+				return 0;
 			}
 
-			fgets(output,MAX_PROCESS_LEN,cmd);
+			if(fgets(output,MAX_PROCESS_LEN,cmd) == NULL)
+                               LogError("fgets() error\n");
 			pid_t pid = strtoul(output,NULL,10);// base 10 (decimal)
 			LogInfo("Check parodus pid %d\n",pid);
 			pclose(cmd);
 			if(pid)
 			{
 				LogError("wan-status is ready, but Pardous process is already started/running \n");
-				return;
+				return 0;
 			}
 
 		      }
@@ -187,7 +194,6 @@ int main(int argc, char *argv[])
                  }
 	}
 	
-	char unreg_cmd[1024] = {'\0'};
 	/*Coverity Fix CID:78992,78513  */
 	char modelName[256]={'\0'};
 	char serialNumber[256]={'\0'};
@@ -317,7 +323,7 @@ int main(int argc, char *argv[])
 
 			// Strip all spaces and parentheses from reboot reason to make it one word
 			// This also prevents command line parsing issues due to value like '-s'
-			int i=0, j=0;
+			unsigned int i=0, j=0;
 			for(i=0; i < sizeof(lastRebootReason) && j < sizeof(final_lastRebootReason); i++) {
 				if(lastRebootReason[i] != ' ') {
 					if(lastRebootReason[i] != '(')
@@ -416,7 +422,7 @@ int main(int argc, char *argv[])
                 bootTime = currentTime.tv_sec - upTime;
             }
 
-            if(bootTime > 0 && bootTime < 4294967295)
+            if(bootTime > 0 && bootTime < UINT_MAX)
             {
                 LogInfo("bootTime is %u\n", bootTime);
             }
@@ -652,7 +658,7 @@ static void get_url(char *parodus_url, char *seshat_url, char *build_type)
 		{
 		    char *value = NULL;
 		    
-		    if(value = strstr(str, "PARODUS_URL="))
+		    if((value = strstr(str, "PARODUS_URL=")))
 		    {
 			value = value + strlen("PARODUS_URL=");
                     rc = strcpy_s(parodus_url, MAX_SERVER_URL_SIZE, value);
@@ -665,7 +671,7 @@ static void get_url(char *parodus_url, char *seshat_url, char *build_type)
 					
 		    }
 		    
-            else if(value = strstr(str, "SESHAT_URL="))
+            else if((value = strstr(str, "SESHAT_URL=")))
             {
                 value = value + strlen("SESHAT_URL=");
                 rc = strcpy_s(seshat_url, MAX_SERVER_URL_SIZE, value);
@@ -677,7 +683,7 @@ static void get_url(char *parodus_url, char *seshat_url, char *build_type)
 		        }
             }
 
-		    else if(value = strstr(str, "BUILD_TYPE="))
+		    else if((value = strstr(str, "BUILD_TYPE=")))
             {
                 value = value + strlen("BUILD_TYPE=");
                 rc = strcpy_s(build_type, MAX_BUILD_LEN, value);
@@ -724,8 +730,7 @@ static void get_url(char *parodus_url, char *seshat_url, char *build_type)
  
 static void getPartnerId(char *partner_id)
 {
-    errno_t rc = -1;
-	FILE 	*file = NULL;
+    FILE 	*file = NULL;
 
     if( 0 == syscfg_get(NULL, "PartnerID", partner_id, MAX_PARTNERID_LEN))
 	{
@@ -740,7 +745,8 @@ static void getPartnerId(char *partner_id)
 	if(file)
 	{
 	   char *pos;
-	   fgets ( partner_id, 64, file );
+	   if( fgets ( partner_id, 64, file ) == NULL)
+               LogError("fgets() error\n");
 	   pclose ( file );
 	   file = NULL;
 
@@ -1020,7 +1026,8 @@ static void getValuesFromPsmDb(char *names[], char **values,int count)
     {
         for(i=0; i<count; i++)
         {
-            fgets(buf, sizeof(buf), out);
+            if(fgets(buf, sizeof(buf), out) == NULL)
+                LogError("fgets() error\n");
             if(strlen(buf) > 0)
             {
                 char *t = strrchr(buf, '"');
@@ -1083,7 +1090,8 @@ static int setValuesToPsmDb(char *names[], char **values,int count)
     {
         for(i=0; i<count; i++)
         {
-            fgets(buf, sizeof(buf), out);
+            if(fgets(buf, sizeof(buf), out) == NULL)
+                LogError("fgets() error\n");
             sscanf(buf, "%d\n", &ret);
             if(ret != 100)
             {
@@ -1135,9 +1143,7 @@ static int syncXpcParamsOnUpgrade(char *lastRebootReason, char *firmwareVersion)
     char *paramList[] = {"X_COMCAST-COM_CMC","X_COMCAST-COM_CID","X_COMCAST-COM_SyncProtocolVersion"};
 	char *psmValues[MAX_VALUE_SIZE] = {'\0'};
 	char *sysCfgValues[MAX_VALUE_SIZE] = {'\0'};
-	int configUpdateStatus = -1;
-	char *cJsonOut =NULL;
-        errno_t rc = -1;
+	errno_t rc = -1;
         int ind = -1;
         int parodus_enable = 0;
 
@@ -1149,7 +1155,9 @@ static int syncXpcParamsOnUpgrade(char *lastRebootReason, char *firmwareVersion)
 	{
 		LogInfo("cfgJson_firmware fetched from webpa_cfg.json is %s\n", cfgJson_firmware);
 #ifdef UPDATE_CONFIG_FILE
-		cJSON_ReplaceItemInObject(out, WEBPA_CFG_FIRMWARE_VER, cJSON_CreateString(firmwareVersion));
+		char *cJsonOut =NULL;
+                int configUpdateStatus = -1;
+                cJSON_ReplaceItemInObject(out, WEBPA_CFG_FIRMWARE_VER, cJSON_CreateString(firmwareVersion));
 		
 		cJsonOut = cJSON_Print(out);
 		LogInfo("Updated json content is %s\n", cJsonOut);
@@ -1299,7 +1307,7 @@ static void get_parodusStart_logFile(char *parodusStart_Log)
 		{
 		    char *value = NULL;
 		    
-		    if(value = strstr(str, "PARODUS_START_LOG_FILE="))
+		    if((value = strstr(str, "PARODUS_START_LOG_FILE=")))
 		    {
 			value = value + strlen("PARODUS_START_LOG_FILE=");
                         rc = strcpy_s(parodusStart_Log, MAX_BUF_SIZE, value);
@@ -1337,7 +1345,8 @@ static void get_parodusStart_logFile(char *parodusStart_Log)
  */
 static int checkServerUrlFormat(char *serverUrl)
 {
-    int chCnt = 0, i = 0;
+    int chCnt = 0;
+    unsigned int i = 0;
 
     //looping to find count of ':'
     for (i = 0; i<strlen(serverUrl); i++)
@@ -1473,8 +1482,7 @@ static int executeConfigFile()
 	FILE* out = NULL, *file = NULL;
 	pid_t pid;
 	int status;
-	int ret = -1;
-
+	
 	file = fopen(GETCONF_FILE, "r");
 	if(file)
 	{
@@ -1499,7 +1507,7 @@ static int executeConfigFile()
 		pid = getpid();
 		LogInfo("child process execution with pid:%d\n", pid);
 
-		ret = execl(GETCONF_FILE, "GetConfigFile", CURL_FILE_RESPONSE, (char *)0);
+		execl(GETCONF_FILE, "GetConfigFile", CURL_FILE_RESPONSE, (char *)0);
 
 		exit(0);
 	}

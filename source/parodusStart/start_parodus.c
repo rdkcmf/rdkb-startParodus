@@ -200,6 +200,7 @@ int main(int argc, char *argv[])
 	char firmwareVersion[64]={'\0'};
 	char lastRebootReason[128]={'\0'};
 	char deviceMac[64]={'\0'};
+	char webpaInterface[64]={"erouter0"};
 	char manufacturer[64]={'\0'};
 #if defined(_COSA_BCM_MIPS_)
 	dpoe_mac_address_t tDpoe_Mac;
@@ -552,13 +553,29 @@ int main(int argc, char *argv[])
 	{
 		LogError("Failed to get client_cert_path\n");
 	}
-
+#ifdef WAN_FAILOVER_SUPPORTED
+	char interfaceValue[64] = { '\0' };
+	if (sysevent_get(fd, token, "current_wan_ifname", interfaceValue, sizeof(interfaceValue)) == 0)
+	{
+	    rc = strcpy_s(webpaInterface, sizeof(webpaInterface), interfaceValue);
+            if(rc != EOK)
+            {
+                ERR_CHK(rc);
+                LogError("Failed to Copy interfaceValue to webpaInterface\n");
+            }
+            LogInfo("webpaInterface is %s\n", webpaInterface);
+	}
+        else
+        {
+          LogError("Failed to get interface value\n");
+        }
+#endif
 	LogInfo("Framing command for parodus\n");
 	//Enabling parodus by forcing to ipv4
 #if defined (ENABLE_SESHAT) && defined (FEATURE_DNS_QUERY)
         rc = sprintf_s(command, sizeof(command),
-	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=\"%s\" --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=erouter0 --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --seshat-url=%s --client-cert-path=%s --token-server-url=%s --acquire-jwt=%d --dns-txt-url=%s --jwt-public-key-file=%s --jwt-algo=RS256 --crud-config-file=%s --boot-time-retry-wait=%d &", 
-        modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, seshat_url, client_cert_path, TOKEN_SERVER_URL, jwtFlag, DNS_TEXT_URL, JWT_KEY, CRUD_CONFIG_FILE, wait_time);
+	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=\"%s\" --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=%s --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --seshat-url=%s --client-cert-path=%s --token-server-url=%s --acquire-jwt=%d --dns-txt-url=%s --jwt-public-key-file=%s --jwt-algo=RS256 --crud-config-file=%s --boot-time-retry-wait=%d &", 
+        modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaInterface, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, seshat_url, client_cert_path, TOKEN_SERVER_URL, jwtFlag, DNS_TEXT_URL, JWT_KEY, CRUD_CONFIG_FILE, wait_time);
        if(rc < EOK)
        {
           ERR_CHK(rc);
@@ -566,8 +583,8 @@ int main(int argc, char *argv[])
        }
 #elif defined ENABLE_SESHAT
        rc = sprintf_s(command, sizeof(command),
-	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=\"%s\" --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=erouter0 --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --seshat-url=%s --client-cert-path=%s --token-server-url=%s --crud-config-file=%s --boot-time-retry-wait=%d &", 
-        modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, seshat_url, client_cert_path, TOKEN_SERVER_URL, CRUD_CONFIG_FILE, wait_time);
+	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=\"%s\" --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=%s --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --seshat-url=%s --client-cert-path=%s --token-server-url=%s --crud-config-file=%s --boot-time-retry-wait=%d &", 
+        modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaInterface, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, seshat_url, client_cert_path, TOKEN_SERVER_URL, CRUD_CONFIG_FILE, wait_time);
      if(rc < EOK)
      {
         ERR_CHK(rc);
@@ -575,8 +592,8 @@ int main(int argc, char *argv[])
      }
 #elif defined FEATURE_DNS_QUERY
      rc = sprintf_s(command, sizeof(command),
-	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=\"%s\" --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=erouter0 --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --client-cert-path=%s --token-server-url=%s --acquire-jwt=%d --dns-txt-url=%s --jwt-public-key-file=%s --jwt-algo=RS256 --crud-config-file=%s --boot-time-retry-wait=%d &", 
-        modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, client_cert_path, TOKEN_SERVER_URL, jwtFlag, DNS_TEXT_URL, JWT_KEY, CRUD_CONFIG_FILE, wait_time);
+	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=\"%s\" --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=%s --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --client-cert-path=%s --token-server-url=%s --acquire-jwt=%d --dns-txt-url=%s --jwt-public-key-file=%s --jwt-algo=RS256 --crud-config-file=%s --boot-time-retry-wait=%d &", 
+        modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaInterface, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, client_cert_path, TOKEN_SERVER_URL, jwtFlag, DNS_TEXT_URL, JWT_KEY, CRUD_CONFIG_FILE, wait_time);
     if(rc < EOK)
     {
         ERR_CHK(rc);
@@ -584,8 +601,8 @@ int main(int argc, char *argv[])
     }
 #else
     rc = sprintf_s(command, sizeof(command),
-	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=\"%s\" --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=erouter0 --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --client-cert-path=%s --token-server-url=%s --crud-config-file=%s --boot-time-retry-wait=%d &", 
-        modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, client_cert_path, TOKEN_SERVER_URL, CRUD_CONFIG_FILE, wait_time);
+	"/usr/bin/parodus --hw-model=\"%s\" --hw-serial-number=%s --hw-manufacturer=\"%s\" --hw-last-reboot-reason=\"%s\" --fw-name=%s --boot-time=%u --hw-mac=%s --webpa-ping-time=180 --webpa-interface-used=%s --webpa-url=%s --webpa-backoff-max=8 --parodus-local-url=%s --partner-id=%s --ssl-cert-path=%s --connection-health-file=%s --client-cert-path=%s --token-server-url=%s --crud-config-file=%s --boot-time-retry-wait=%d &", 
+        modelName, serialNumber, manufacturer, final_lastRebootReason, firmwareVersion, bootTime, deviceMac, webpaInterface, webpaUrl, ((NULL != parodus_url) ? parodus_url : PARODUS_UPSTREAM), partner_id, SSL_CERT_BUNDLE, PARCONNHEALTH_FILE, client_cert_path, TOKEN_SERVER_URL, CRUD_CONFIG_FILE, wait_time);
     if(rc < EOK)
     {
        ERR_CHK(rc);

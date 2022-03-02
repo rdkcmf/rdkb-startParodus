@@ -66,13 +66,10 @@
 #define WEBPA_CFG_FIRMWARE_VER	      "oldFirmwareVersion"
 #define WEBPA_CFG_MAX_PING_WAIT       "MaxPingWaitTimeInSec"
 #define SSL_CERT_BUNDLE               "/etc/ssl/certs/ca-certificates.crt"
-#define WEBPA_SERVER_URL              "https://fabric.xmidt.comcast.net:8080"
-#define TOKEN_SERVER_URL              "https://issuer.xmidt.comcast.net:8080/issue"
 #define WEBPA_CFG_SERVER_URL          "ServerIP"
 #define WEBPA_CFG_SERVER_PORT         "ServerPort"
 #define PSM_COMPONENT_NAME	      "com.cisco.spvtg.ccsp.psm"
 #define JWT_KEY                       "/etc/ssl/certs/webpa-rs256.pem"
-#define DNS_TEXT_URL                  "fabric.xmidt.comcast.net"
 #define ACQUIRE_JWT		      1
 #define WEBPA_CFG_ACQUIRE_JWT	      "acquire-jwt"
 #define MAX_PROCESS_LEN				  16
@@ -115,6 +112,9 @@ static void checkAndUpdateServerUrlFromDevCfg(char **serverUrl);
 int s_sysevent_connect (token_t *out_se_token);
 #endif
 static char *pathPrefix  = "eRT.com.cisco.spvtg.ccsp.webpa.";
+static char *WEBPA_SERVER_URL = "https://fabric.xmidt.comcast.net:8080";
+static char *TOKEN_SERVER_URL = "https://issuer.xmidt.comcast.net:8080/issue";
+static char *DNS_TEXT_URL = "fabric.xmidt.comcast.net";
 static int executeConfigFile();
 FILE* g_fArmConsoleLog = NULL;
 /*----------------------------------------------------------------------------*/
@@ -461,11 +461,6 @@ int main(int argc, char *argv[])
 			cJSON_Delete(out);
 		}
 	}
-	if(webpaUrl == NULL)
-	{	
-		LogInfo("Setting webpaUrl to default server IP\n");
-		webpaUrl = strdup(WEBPA_SERVER_URL);
-	}
 
         getPartnerId(partner_id);
         LogInfo("PartnerID fetched is %s\n", partner_id);
@@ -502,8 +497,29 @@ int main(int argc, char *argv[])
                     ERR_CHK(rc);
                     goto RETURN_ERROR;
                 }
-    }
+        }
 	LogInfo("PartnerID framed is %s\n", partner_id);
+
+#if defined (_SR300_PRODUCT_REQ_)
+        if(!partnerid_invalid)
+        {
+                rc = strcmp_s("*,sky-uk",strlen("*,sky-uk"),partner_id,&ind);
+                ERR_CHK(rc);
+                if((ind == 0) && (rc == EOK))
+                {
+                     WEBPA_SERVER_URL = "https://fabric.xmidt-eu.comcast.net:8080";
+                     TOKEN_SERVER_URL = "https://issuer.xmidt-eu.comcast.net:8080/issue";
+                     DNS_TEXT_URL = "fabric.xmidt-eu.comcast.net";
+                }
+        }
+#endif
+
+	if(webpaUrl == NULL)
+	{
+		LogInfo("Setting webpaUrl to default server IP\n");
+		webpaUrl = strdup(WEBPA_SERVER_URL);
+	}
+
 
 	getValueFromCfgJson( WEBPA_CFG_ACQUIRE_JWT, &acquireJwt, &out);
 	if(out != NULL && acquireJwt != NULL)

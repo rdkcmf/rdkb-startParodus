@@ -628,6 +628,15 @@ int main(int argc, char *argv[])
        ERR_CHK(rc);
        goto RETURN_ERROR;
     }
+#endif   
+ 
+#ifdef ENABLE_WEBCFGBIN
+       #define MAX_QUEUE_SIZE 10
+       char max_queue_size[24] = {'\0'};
+       snprintf(max_queue_size,sizeof(max_queue_size),"--max-queue-size=%d &", MAX_QUEUE_SIZE);
+       //To remove the '&' from command
+       command[strlen(command)-1] = '\0';
+       strcat(command,max_queue_size);
 #endif
 
 	LogInfo("parodus command formed is: %s\n", command);

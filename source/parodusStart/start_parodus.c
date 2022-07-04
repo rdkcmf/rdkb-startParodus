@@ -56,7 +56,7 @@
 #define DEVICE_PROPS_FILE             "/etc/device.properties"
 #define MODULE 			      "PARODUS"
 #define MAX_BUF_SIZE 		      1024
-#define MAX_VALUE_SIZE 		      32
+#define MAX_VALUE_SIZE 		      64
 #define MAX_SERVER_URL_SIZE           64
 #define LOG_ERROR                     0
 #define LOG_INFO                      1
@@ -101,6 +101,7 @@ static void _START_LOG(int level, const char *msg, ...);
 static void getValueFromCfgJson( char *key, char **value, cJSON **out);
 static int  writeToJson(char *data);
 static void getValuesFromPsmDb(char *names[], char **values,int count);
+static void getWebpaValuesFromPsmDb(char *names[], char **values,int count);
 static void getValuesFromSysCfgDb(char *names[], char **values,int count);
 static int setValuesToPsmDb(char *names[], char **values,int count);
 static void waitForPSMHealth(char *compName);
@@ -112,9 +113,9 @@ static void checkAndUpdateServerUrlFromDevCfg(char **serverUrl);
 int s_sysevent_connect (token_t *out_se_token);
 #endif
 static char *pathPrefix  = "eRT.com.cisco.spvtg.ccsp.webpa.";
-static char *WEBPA_SERVER_URL = "https://fabric.xmidt.comcast.net:8080";
-static char *TOKEN_SERVER_URL = "https://issuer.xmidt.comcast.net:8080/issue";
-static char *DNS_TEXT_URL = "fabric.xmidt.comcast.net";
+static char *WEBPA_SERVER_URL = "";
+static char *TOKEN_SERVER_URL = "";
+static char *DNS_TEXT_URL = "";
 static int executeConfigFile();
 FILE* g_fArmConsoleLog = NULL;
 /*----------------------------------------------------------------------------*/
@@ -221,6 +222,7 @@ int main(int argc, char *argv[])
        	int cmdUpdateStatus = -1;
         int upTime=0, syncStatus= -1;
 	char *paramList[] = {"X_COMCAST-COM_CMC","X_COMCAST-COM_CID","X_COMCAST-COM_SyncProtocolVersion"};
+        char *webpaParamList[] = {"Device.X_RDKCENTRAL-COM_Webpa.Server.URL","Device.X_RDKCENTRAL-COM_Webpa.TokenServer.URL","Device.X_RDKCENTRAL-COM_Webpa.DNSText.URL"};
 	int paramCount = 0, i = 0, wait_time = 0;
 	char *psmValues[MAX_VALUE_SIZE] = {'\0'};
 	char *acquireJwt = NULL;
@@ -501,19 +503,37 @@ int main(int argc, char *argv[])
         }
 	LogInfo("PartnerID framed is %s\n", partner_id);
 
-#if defined (_SR300_PRODUCT_REQ_)
-        if(!partnerid_invalid)
+	paramCount = sizeof(webpaParamList)/sizeof(webpaParamList[0]);
+        getWebpaValuesFromPsmDb(webpaParamList, psmValues, paramCount);
+        LogInfo("DB details are %s = %s %s = %s %s = %s\n",webpaParamList[0],psmValues[0],webpaParamList[1],psmValues[1],webpaParamList[2],psmValues[2]);
+        for(i=0;i<paramCount;i++)
         {
-                rc = strcmp_s("*,sky-uk",strlen("*,sky-uk"),partner_id,&ind);
-                ERR_CHK(rc);
-                if((ind == 0) && (rc == EOK))
-                {
-                     WEBPA_SERVER_URL = "https://fabric.xmidt-eu.comcast.net:8080";
-                     TOKEN_SERVER_URL = "https://issuer.xmidt-eu.comcast.net:8080/issue";
-                     DNS_TEXT_URL = "fabric.xmidt-eu.comcast.net";
-                }
+                if(psmValues[i])
+                {    
+	             if(i==0) 
+                     {		
+			WEBPA_SERVER_URL = strdup(psmValues[i]);
+		     } 
+		     else if(i==1) 
+                     {
+			     TOKEN_SERVER_URL = strdup(psmValues[i]);
+		     }
+		     else if(i==2) 
+                     {
+			     DNS_TEXT_URL = strdup(psmValues[i]);
+		     }	     
+		}   
         }
-#endif
+	for(i=0;i<paramCount;i++)
+	{
+		if(psmValues[i])
+		{
+			free(psmValues[i]);
+		}
+	}
+	LogInfo("WEBPA_SERVER_URL = %s\n", WEBPA_SERVER_URL);
+	LogInfo("TOKEN_SERVER_URL = %s\n", TOKEN_SERVER_URL);
+	LogInfo("DNS_TEXT_URL = %s\n", DNS_TEXT_URL);
 
 	if(webpaUrl == NULL)
 	{
@@ -1026,7 +1046,7 @@ static int writeToJson(char *data)
     return 0;
 }
 
-static void getValuesFromPsmDb(char *names[], char **values,int count)
+static void getWebpaValuesFromPsmDb(char *names[], char **values,int count)
 {
     FILE* out = NULL;
     errno_t rc = -1;
@@ -1038,7 +1058,7 @@ static void getValuesFromPsmDb(char *names[], char **values,int count)
 
     for(i=0; i<count; i++)
     {
-        rc = sprintf_s(tempBuf + offset, sizeof(tempBuf) - offset, " %dX %s%s", i, pathPrefix, names[i]);
+        rc = sprintf_s(tempBuf + offset, sizeof(tempBuf) - offset, " %dX %s", i, names[i]);
         if(rc < EOK)
         {
            ERR_CHK(rc);
@@ -1089,6 +1109,28 @@ static void getValuesFromPsmDb(char *names[], char **values,int count)
     {
         LogError("Failed to execute command\n");
     }
+}
+
+static void getValuesFromPsmDb(char *names[], char **values,int count)
+{
+    int i=0;
+    char* prefixNames[count];
+    char* buf = NULL;
+    buf = (char*) malloc(MAX_BUF_SIZE);
+    if(buf != NULL)
+    {
+        for(i=0; i<count; i++)
+        {
+            snprintf(buf, MAX_BUF_SIZE, "%s%s", pathPrefix, names[i]);
+	    prefixNames[i] = strdup(buf);
+        }
+        free(buf);
+        getWebpaValuesFromPsmDb( prefixNames, values, count );
+    }
+    else
+    {
+        LogError("getValuesFromPsmDb Failed\n");	    
+    } 
 }
 
 static int setValuesToPsmDb(char *names[], char **values,int count)

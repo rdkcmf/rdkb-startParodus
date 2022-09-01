@@ -573,7 +573,7 @@ int main(int argc, char *argv[])
 	{
 		LogError("Failed to get client_cert_path\n");
 	}
-#ifdef WAN_FAILOVER_SUPPORTED
+#if defined(WAN_FAILOVER_SUPPORTED) || defined(FEATURE_RDKB_CONFIGURABLE_WAN_INTERFACE)
 	char interfaceValue[64] = { '\0' };
 	if (sysevent_get(fd, token, "current_wan_ifname", interfaceValue, sizeof(interfaceValue)) == 0)
 	{
